@@ -458,6 +458,23 @@ sub updates_disallowed {
     return '';
 }
 
+# Allow cobrands to prevent reports from being reopened
+sub reopening_disallowed {
+    my ($self, $problem) = @_;
+    my $c = $self->{c};
+
+    # Check if reopening is disallowed by the problem's category
+    return 1 if $self->next::method($problem);
+
+    # Check if reopening is disallowed by the cobrand
+    if (my $cfg = $self->feature('reopening_disallowed')) {
+        return 1;
+    }
+
+    # Default to allowing reports to be reopened
+    return 0;
+}
+
 # Report if cobrand denies updates by user
 sub deny_updates_by_user {
     my ($self, $row) = @_;
