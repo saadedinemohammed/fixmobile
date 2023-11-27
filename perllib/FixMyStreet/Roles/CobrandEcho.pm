@@ -65,11 +65,11 @@ sub ordinal {
 }
 
 sub construct_bin_date {
-    my $str = shift;
-    return unless $str;
-    my $offset = ($str->{OffsetMinutes} || 0) * 60;
+    my $hash_ref = shift;
+    return unless $hash_ref && $hash_ref->{DateTime};
+    my $offset = ($hash_ref->{OffsetMinutes} || 0) * 60;
     my $zone = DateTime::TimeZone->offset_as_string($offset);
-    my $date = DateTime::Format::W3CDTF->parse_datetime($str->{DateTime});
+    my $date = DateTime::Format::W3CDTF->parse_datetime($hash_ref->{DateTime});
     $date->set_time_zone($zone);
     return $date;
 }
@@ -125,7 +125,6 @@ sub _parse_events {
         # Only care about open requests/enquiries
         my $closed = $self->_closed_event($_);
         next if $type ne 'missed' && $type ne 'bulky' && $closed;
-        next if $type eq 'bulky' && !$closed;
 
         if ($type eq 'request') {
             my $report = $self->problems->search({ external_id => $_->{Guid} })->first;
@@ -142,13 +141,23 @@ sub _parse_events {
         } elsif ($type eq 'missed') {
             $self->parse_event_missed($_, $closed, $events);
         } elsif ($type eq 'bulky') {
-            my $report = $self->problems->search({ external_id => $_->{Guid} })->first;
-            my $resolved_date = construct_bin_date($_->{ResolvedDate});
-            $events->{enquiry}->{$event_type} = {
-                date => $resolved_date,
-                report => $report,
-                resolution => $_->{ResolutionCodeId},
-                state => $_->{EventStateId},
+            if (!$closed) {
+                my $report = $self->problems->search({ external_id => $_->{Guid} })->first;
+                $events->{enquiry}->{$event_type} = {
+                    report => $report,
+                    date => construct_bin_date({ DateTime => $report->get_extra_field_value('Collection_Date')}),
+                    resolution => $_->{ResolutionCodeId},
+                    state => 'open',
+                };
+            } else {
+                my $report = $self->problems->search({ external_id => $_->{Guid} })->first;
+                my $resolved_date = construct_bin_date($_->{ResolvedDate});
+                $events->{enquiry}->{$event_type} = {
+                    date => $resolved_date,
+                    report => $report,
+                    resolution => $_->{ResolutionCodeId},
+                    state => $_->{EventStateId},
+                };
             };
         } else { # General enquiry of some sort
             $events->{enquiry}->{$event_type} = 1;
@@ -632,6 +641,10 @@ sub bulky_check_missed_collection {
             }
         }
     }
+
+    # Open events are coming through and we only want to continue under specific circumstances with an open event
+    return unless (!$event->{state} || $event->{state} ne 'open') || $self->{c}->cobrand->call_hook('bulky_open_overdue', $event, $row);
+
     $row->{report_allowed} = $in_time && !$row->{report_locked_out};
 
     my $missed_events = $events->{missed}->{$service_id} || [];

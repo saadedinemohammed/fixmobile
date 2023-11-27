@@ -213,9 +213,7 @@ FixMyStreet::override_config {
 
         subtest 'Confirmation page' => sub {
             $mech->content_contains('Small items collection booking confirmed');
-
             $report = FixMyStreet::DB->resultset("Problem")->search(undef, { order_by => { -desc => 'id' } })->first;
-
             is $report->category, 'Small items collection', 'correct category on report';
             is $report->title, 'Small items collection', 'correct title on report';
             is $report->get_extra_field_value('payment_method'), undef;
@@ -457,7 +455,7 @@ FixMyStreet::override_config {
     };
 
     subtest 'Missed collections' => sub {
-        # Fixed date still set to 5th July
+        # Fixed date still set to 25th June
         $mech->get_ok('/waste/12345');
         $mech->content_lacks('Report a small items collection as missed');
         $mech->get_ok('/waste/12345/report');
@@ -516,7 +514,23 @@ FixMyStreet::override_config {
         $mech->content_contains('A small items collection has been reported as missed');
         $mech->get_ok('/waste/12345/report');
         $mech->content_lacks('Small items collection');
-        $echo->mock( 'GetEventsForObject', sub { [] } );
+        $report = FixMyStreet::DB->resultset("Problem")->search(undef, { order_by => { -asc => 'id' } })->first;
+        $report->set_extra_fields({ name => 'Collection_Date', value => '2023-06-24T04:01:01'});
+        $report->external_id('GUID');
+        $report->update;
+        $echo->mock( 'GetEventsForObject', sub { [ {
+            EventTypeId => 2964,
+            ResolvedDate => '',
+            ResolutionCodeId => '',
+            EventStateId => 18489,
+            Guid => 'GUID',
+        } ] } );
+        $mech->get_ok('/waste/12345');
+        $mech->content_contains('Report a small items collection as missed', 'Open collection can be reported as collection overdue');
+        $report->set_extra_fields({ name => 'Collection_Date', value => '2023-06-25T04:00:00'});
+        $report->update;
+        $mech->get_ok('/waste/12345');
+        $mech->content_lacks('Report a small items collection as missed', 'Open collection can not be reported as collection still due');
     };
 };
 

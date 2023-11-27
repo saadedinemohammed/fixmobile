@@ -1637,4 +1637,21 @@ sub waste_reconstruct_bulky_data {
     return $saved_data;
 }
 
+sub bulky_open_overdue {
+    my ($self, $event) = @_;
+
+    if ($event->{state} eq 'open' && $self->_bulky_collection_overdue($event)) {
+        return 1;
+    }
+}
+
+sub _bulky_collection_overdue {
+    my $collection_due_date = $_[1]->{date};
+    $collection_due_date->truncate(to => 'day');
+    my $today = DateTime->now->set_time_zone(FixMyStreet->local_time_zone);
+    $today->truncate(to => 'day');
+    my $duration = $today-$collection_due_date;
+    return $duration->is_positive;
+}
+
 1;
