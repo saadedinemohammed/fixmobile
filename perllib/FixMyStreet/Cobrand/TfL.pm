@@ -1,3 +1,13 @@
+=head1 NAME
+
+FixMyStreet::Cobrand::TfL - code specific to the Transport for London cobrand
+
+=head1 SYNOPSIS
+
+Transport for London is an FMS integration. It covers multiple London Borough areas
+
+=cut
+
 package FixMyStreet::Cobrand::TfL;
 use parent 'FixMyStreet::Cobrand::Whitelabel';
 
@@ -6,6 +16,16 @@ use warnings;
 use utf8;
 
 use Moo;
+
+=head1 DESCRIPTION
+
+=cut
+
+=head1 FixMyStreet::Roles::BoroughEmails
+
+TfL sends emails in some categories to different addresses depending on Borough
+
+=cut
 with 'FixMyStreet::Roles::BoroughEmails';
 
 use POSIX qw(strcoll);
@@ -14,6 +34,12 @@ use FixMyStreet::MapIt;
 use mySociety::ArrayUtils;
 use Utils;
 
+=head1 london_boroughs
+
+Lists London Boroughs covered by TfL using the body_id
+
+=cut
+
 sub london_boroughs { (
     2511, 2489, 2494, 2488, 2482, 2505, 2512, 2481, 2484, 2495,
     2493, 2508, 2502, 2509, 2487, 2485, 2486, 2483, 2507, 2503,
@@ -21,7 +47,12 @@ sub london_boroughs { (
     2496, 2501, 2504,
 ) }
 
-# Surrounding areas for bus stops which can be outside London
+=head1 surrounding_boroughs
+
+Lists areas outside London for bus stops which may be TfL but not in a London Borough
+
+=cut
+
 sub surrounding_london { (
     # Clockwise from top left: South Bucks, Three Rivers, Watford, Hertsmere,
     # Welwyn Hatfield, Broxbourne, Epping Forest, Brentwood, Thurrock,
@@ -37,7 +68,21 @@ sub council_area { return 'TfL'; }
 sub council_name { return 'TfL'; }
 sub council_url { return 'tfl'; }
 sub area_types  { [ 'LBO', 'UTA', 'DIS' ] }
+
+=head1 is_council
+
+TfL is not a council so prevent council related versions
+of text appearing on the web and in emails
+
+=cut
+
 sub is_council { 0 }
+
+=head1 borough_for_report
+
+TfL lists the Borough the report is made in when listing reports on the TfL cobrand
+
+=cut
 
 sub borough_for_report {
     my ($self, $problem) = @_;
@@ -52,8 +97,28 @@ sub borough_for_report {
     return $areas->{$council_match}{name};
 }
 
+=head1 abuse_reports_only
+
+TfL only allows contact form to report abusive reports
+
+=cut
+
 sub abuse_reports_only { 1 }
+
+=head1 send_questionnaires
+
+Reports made to TfL do not get followed up by a questionnaire asking the reporter
+if the issues is fixed
+
+=cut
+
 sub send_questionnaires { 0 }
+
+=head1 disambiguate_location
+
+The town is set to London for TfL as they cover the whole of London
+
+=cut
 
 sub disambiguate_location {
     my $self    = shift;
@@ -65,16 +130,46 @@ sub disambiguate_location {
     };
 }
 
+=head1 get_geocoder
+
+TfL uses Open Street Maps for geocoding
+
+=cut
+
 sub get_geocoder { 'OSM' }
 
+=head1 category_change_force_resend
+
+TfL is set to resend a report if the category is updated
+
+=cut
+
 sub category_change_force_resend { 1 }
+
+=head1 enter_postcode_text
+
+TfL's front page prompt for entering a search is set in the cobrand file
+
+=cut
 
 sub enter_postcode_text {
     my ($self) = @_;
     return 'Enter a London postcode, or street name and area, or a reference number of a problem previously reported';
 }
 
+=head1 privacy_policy_url
+
+TfL's privacy policy url is set in the cobrand file
+
+=cut
+
 sub privacy_policy_url { 'https://tfl.gov.uk/corporate/privacy-and-cookies/reporting-street-problems' }
+
+=head1 about_hook
+
+TfL forwards to its own privacy policy link (set in privacy_policy_url) for about/privacy.html
+
+=cut
 
 sub about_hook {
     my $self = shift;
@@ -86,8 +181,13 @@ sub about_hook {
     }
 }
 
-# These need to be overridden so the method in UKCouncils doesn't create
-# a fixmystreet.com link (because of the false-returning owns_problem call)
+=head1 relative_url_for_report & base_url_for_report
+
+These are overridden so the method in UKCouncils doesn't create
+a fixmystreet.com link (because of the false-returning owns_problem call)
+
+=cut
+
 sub relative_url_for_report { "" }
 sub base_url_for_report {
     my $self = shift;
@@ -103,9 +203,27 @@ sub categories_restriction {
     return $rs->search( { category => { -not_in => $self->_tfl_no_resend_categories } } );
 }
 
+=head1 admin_user_domain
+
+Restrict admin users to tfl.gov.uk email addresses
+
+=cut
+
 sub admin_user_domain { 'tfl.gov.uk' }
 
+=head1 allow_anonymous_reports
+
+Sets anonymous reports to show a button for anonymous reporting
+
+=cut
+
 sub allow_anonymous_reports { 'button' }
+
+=head1 lookup_by_ref_regex & lookup_by_ref
+
+Can search for TfL reports by their id number in the postcode search
+
+=cut
 
 sub lookup_by_ref_regex {
     return qr/^\s*((?:FMS\s*)?\d+)\s*$/i;
@@ -121,12 +239,34 @@ sub lookup_by_ref {
     return 0;
 }
 
+=head1
+
+=cut
+
 sub report_sent_confirmation_email { 'id' }
+
+=head1 report_age
+
+By default TfL only shows reports on the map and in the report list for 6 weeks
+
+=cut
 
 sub report_age { '6 weeks' }
 
-# We don't want any reports made before the go-live date visible
+=head1 cut_off_date
+
+TfL doesn't show reports made before the go-live date (2019-12-09)
+
+=cut
+
 sub cut_off_date { '2019-12-09 12:00' }
+
+
+=head1 problems_restriction & problems_sql_restriction
+
+Limit problem listings history to problems that have been updated in the last 3 years
+
+=cut
 
 sub problems_restriction {
     my ($self, $rs) = @_;
@@ -157,6 +297,12 @@ sub inactive_reports_filter {
     }
     return $rs;
 }
+
+=head1 password_expiry
+
+
+
+=cut
 
 sub password_expiry {
     return if FixMyStreet->test_mode;
