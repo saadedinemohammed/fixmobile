@@ -119,9 +119,7 @@ input.bulk-assign {
 }
 
 #show_old_reports_wrapper {
-  float: right;
-  margin-top: 20px;
-
+  align-self: flex-end;
   .govuk-label.govuk-checkboxes__label {
     font-size: 13px;
   }
@@ -141,10 +139,6 @@ input.bulk-assign {
   }
 
   #show_old_reports_wrapper {
-    padding-left: 24px; // Align vertically with the option above
-    margin-top: 41px;
-    float: none;
-
     .govuk-label.govuk-checkboxes__label {
       font-size: 1rem;
     }
@@ -154,7 +148,7 @@ input.bulk-assign {
 .govuk-fieldset-wrapper {
   padding: 1rem;
 
-  .multi-select-filter-group {
+  .multi-select-filter-group, .filter-group {
     display: flex;
     flex-direction: row;
     gap: 1rem;
