@@ -1330,7 +1330,15 @@ $.extend(fixmystreet.set_up, {
 
     var focusFirstVisibleInput = function() {
         // Ignore logged-in form here, because it should all be pre-filled already!
-        $('#form_sign_in_yes input, #form_sign_in_no input').filter(':visible').eq(0).trigger('focus');
+        var $inputs = $('#form_sign_in_yes input, #form_sign_in_no input').filter(':visible');
+
+        // Check if there is an element with class .form-section-preview. This will allow users to rectify any previews answers without having to circle around the whole page.
+        var $formSectionPreview = $('.form-section-preview').first();
+        if ($formSectionPreview.length) {
+            $formSectionPreview.children().first().trigger('focus');
+        } else {
+            $inputs.eq(0).trigger('focus');
+        }
     };
 
     // Display tweak
