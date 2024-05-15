@@ -15,6 +15,8 @@ has 'whitespace' => (
     default => sub { Integrations::Whitespace->new(%{shift->feature('whitespace')}) },
 );
 
+use constant WORKING_DAYS_WINDOW => 3;
+
 sub bin_addresses_for_postcode {
     my ($self, $postcode) = @_;
 
@@ -91,7 +93,7 @@ sub bin_services_for_address {
     my ($property_logs, $street_logs) = $self->_in_cab_logs($property);
 
     $property->{red_tags} = $property_logs;
-    $property->{service_updates} = $street_logs;
+    $property->{service_updates} = grep { $_->{service_update} } @$street_logs;
     my %round_exceptions = map { $_->{round} => 1 } @$property_logs;
     $property->{round_exceptions} = \%round_exceptions;
 
@@ -218,9 +220,6 @@ sub bin_services_for_address {
             $filtered_service->{report_open} = 0;
         }
 
-        $filtered_service->{report_open}
-            = $property->{missed_collection_reports}{ $filtered_service->{service_id} } ? 1 : 0;
-
         $filtered_service->{report_allowed}
             = $self->can_report_missed( $property, $filtered_service );
 
@@ -345,16 +344,32 @@ sub _recent_collections {
 # Returns a hashref of recent in-cab logs for the property, split by USRN and
 # UPRN
 sub _in_cab_logs {
-    my ( $self, $property ) = @_;
+    my ( $self, $property, $all_logs ) = @_;
 
     # Logs are recorded against parent properties, not children
     $property = $property->{parent_property} if $property->{parent_property};
 
-    my $dt_from = $self->_subtract_working_days(3);
-    my $cab_logs = $self->whitespace->GetInCabLogsByUprn(
-        $property->{uprn},
-        $dt_from->stringify,
-    );
+    my $dt_from = $self->_subtract_working_days(WORKING_DAYS_WINDOW);
+    my $cab_logs;
+    if ( !$self->{c}->stash->{cab_logs} ) {
+        my $cab_logs_uprn = $self->whitespace->GetInCabLogsByUprn(
+            $property->{uprn},
+            $dt_from->stringify,
+        );
+        my $cab_logs_usrn = $self->whitespace->GetInCabLogsByUsrn(
+            $cab_logs_uprn->[0]{Usrn},
+            $dt_from->stringify,
+        );
+        $cab_logs = [ @$cab_logs_uprn, @$cab_logs_usrn ];
+
+        # Make cab logs unique by LogID
+        my %seen;
+        @$cab_logs = grep { !$seen{ $_->{LogID} }++ } @$cab_logs;
+
+        $self->{c}->stash->{cab_logs} = $cab_logs;
+    } else {
+        $cab_logs = $self->{c}->stash->{cab_logs};
+    }
 
     my @property_logs;
     my @street_logs;
@@ -362,11 +377,12 @@ sub _in_cab_logs {
     return ( \@property_logs, \@street_logs ) unless $cab_logs;
 
     for (@$cab_logs) {
-        next if !$_->{Reason} || $_->{Reason} eq 'N/A'; # Skip non-exceptional logs
+        # Skip non-exceptional logs
+        next if (!$_->{Reason} || $_->{Reason} eq 'N/A') && !$all_logs;
 
         my $logdate = DateTime::Format::Strptime->new( pattern => '%Y-%m-%dT%H:%M:%S' )->parse_datetime( $_->{LogDate} );
 
-        if ( $_->{Uprn} ) {
+        if ( $_->{Uprn} && $_->{Uprn} eq $property->{uprn} ) {
             push @property_logs, {
                 uprn   => $_->{Uprn},
                 round  => $_->{RoundCode},
@@ -376,6 +392,7 @@ sub _in_cab_logs {
             };
         } else {
             push @street_logs, {
+                service_update => $_->{Uprn} ? 0 : 1,
                 round  => $_->{RoundCode},
                 reason => $_->{Reason},
                 date   => $logdate,
@@ -393,14 +410,59 @@ sub can_report_missed {
     # Cannot make a report if there is already an open one for this service
     return 0 if $property->{missed_collection_reports}{ $service->{service_id} };
 
-    # Need to be within 3 working days of the last collection
-    my $last_dt = $property->{recent_collections}{ $service->{round_schedule} };
-    return 0 unless $last_dt && $self->within_working_days($last_dt, 3);
-
     # Can't make a report if an exception has been logged for the service's round
     return 0 if $property->{round_exceptions}{ $service->{round} };
 
-    return 1;
+    # Needs to be within 3 working days of the last completed round, today
+    # not included.
+    # NOTE recent_collections shows the 'ideal'/expected collection date,
+    # not actual. So we need to check cab logs for actual collection date.
+    my $last_expected_collection_dt
+        = $property->{recent_collections}{ $service->{round_schedule} };
+
+    if ($last_expected_collection_dt) {
+        # We need to consider both property and street logs here,
+        # as either type may log a successful collection
+        # (i.e. 'Reason' = 'N/A' for given round)
+        my ( $property_logs, $street_logs )
+            = $self->_in_cab_logs( $property, 1 );
+
+        # If there is a log for this collection, that is when
+        # the round was completed so we can make a report if
+        # we're within that time
+        my ($log_for_round)
+            = grep { $_->{round} eq $service->{round} }
+            ( @$property_logs, @$street_logs );
+
+        # log time needs to be greater than or equal to 3 working days ago,
+        # less than today
+        my $min_dt = $self->_subtract_working_days(WORKING_DAYS_WINDOW);
+        my $today_dt
+            = DateTime->today( time_zone => FixMyStreet->local_time_zone );
+        my $now_dt
+            = DateTime->now( time_zone => FixMyStreet->local_time_zone );
+
+        # We need to check if the last collection was made over
+        # WORKING_DAYS_WINDOW ago because some collections are weekly and some
+        # fortnightly, but they share a round code prefix.
+        return 0 if $last_expected_collection_dt < $min_dt && !$service->{next}{is_today};
+
+        return (   $log_for_round->{date} < $now_dt
+                && $log_for_round->{date} >= $min_dt ) ? 1 : 0
+            if $log_for_round;
+
+        $service->{last}{is_delayed} =
+            ($last_expected_collection_dt < $today_dt && $last_expected_collection_dt >= $min_dt)
+            || ($service->{next}{is_today} && $now_dt->hour >= 17) ? 1 : 0;
+    }
+
+    # At this point, missed report is not allowed because
+    # a) collection is marked as delayed
+    # OR
+    # b) collection was been made over WORKING_DAYS_WINDOW ago
+    # OR
+    # c) new service, so no last collection expected
+    return 0;
 }
 
 # Bexley want services to be ordered by next collection date.
@@ -773,18 +835,6 @@ sub _subtract_working_days {
         public_holidays => FixMyStreet::Cobrand::UK::public_holidays() );
 
     return $wd->sub_days( $dt, $day_count );
-}
-
-sub within_working_days {
-    my ($self, $dt, $days, $future) = @_;
-    my $wd = FixMyStreet::WorkingDays->new(public_holidays => FixMyStreet::Cobrand::UK::public_holidays());
-    $dt = $wd->add_days($dt, $days)->ymd;
-    my $today = DateTime->now->set_time_zone(FixMyStreet->local_time_zone)->ymd;
-    if ( $future ) {
-        return $today ge $dt;
-    } else {
-        return $today le $dt;
-    }
 }
 
 sub waste_munge_report_data {
