@@ -319,6 +319,10 @@ sub process_bulky_amend : Private {
         add_cancellation_update($c, $p);
 
         $c->forward('process_bulky_data', [ $form ]);
+        my $new = $c->stash->{report};
+        $new->set_extra_metadata(previous_booking_id => $p->id);
+        $new->detail($new->detail . " | Previously submitted as " . $p->external_id);
+        $new->update;
     } else {
         $p->create_related( moderation_original_data => {
             title => $p->title,
