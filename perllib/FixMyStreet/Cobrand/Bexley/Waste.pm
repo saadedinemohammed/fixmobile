@@ -15,6 +15,102 @@ has 'whitespace' => (
     default => sub { Integrations::Whitespace->new(%{shift->feature('whitespace')}) },
 );
 
+sub waste_fetch_events {
+    my ( $self, $params ) = @_;
+
+    my $gsr_updates = Open311::GetServiceRequestUpdates->new(
+        current_body => $self->body,
+        system_user => $self->body->comment_user,
+    );
+
+    my $missed_collection_reports = $self->problems->search(
+        {   external_id => { like => 'Whitespace%' },
+            state => [ FixMyStreet::DB::Result::Problem->open_states() ],
+        },
+        { order_by => 'id' },
+    );
+
+    my $missed_collection_service_property_id = 68;
+    my $db = FixMyStreet::DB->schema->storage;
+
+    while ( my $report = $missed_collection_reports->next ) {
+        print 'Fetching data for report ' . $report->id . "\n" if $params->{verbose};
+
+        my $worksheet_id = $report->external_id =~ s/Whitespace-//r;
+        my $worksheet
+            = $self->whitespace->GetFullWorksheetDetails($worksheet_id);
+
+        # Get info for missed collection
+        my $missed_collection_properties;
+        for my $service_properties (
+            @{  $worksheet->{WSServiceProperties}{WorksheetServiceProperty}
+                    // []
+            }
+        ) {
+            next
+                unless $service_properties->{ServicePropertyID}
+                == $missed_collection_service_property_id;
+
+            $missed_collection_properties = $service_properties;
+        }
+
+        my $whitespace_state_string
+            = $missed_collection_properties
+            ? $missed_collection_properties->{ServicePropertyValue}
+            : '';
+
+        my $config = $self->feature('whitespace');
+        my $new_state
+            = $config->{missed_collection_state_mapping}
+                {$whitespace_state_string};
+        unless ($new_state) {
+            print "  No new state, skipping\n" if $params->{verbose};
+            next;
+        }
+
+        next
+            unless $self->waste_check_last_update( $params, $report,
+            $new_state );
+
+        my $request = {
+            description => $new_state->{text},
+            # No data from Whitespace for this, so make it now
+            comment_time =>
+                DateTime->now->set_time_zone( FixMyStreet->local_time_zone ),
+            external_status_code => $whitespace_state_string,
+            prefer_template      => 1,
+            status               => $new_state->{fms_state},
+            # TODO Is there an ID for specific worksheet update?
+            update_id => $report->external_id,
+        };
+
+        print
+            "  Updating report to state '$request->{status}' - '$request->{description}' ($request->{external_status_code})\n"
+            if $params->{verbose};
+
+        $gsr_updates->process_update(
+            $request,
+            $report,
+        );
+    }
+}
+
+sub waste_check_last_update {
+    my ( $self, $params, $report, $new_state ) = @_;
+
+    my $last_update = $report->comments->search(
+        { external_id => { like => 'Whitespace%' } },
+        { order_by => { -desc => 'id' } }
+    )->first;
+
+    if ( $last_update && $new_state->{fms_state} eq $last_update->problem_state ) {
+        print "  Latest update matches fetched state, skipping\n" if $params->{verbose};
+        return;
+    }
+
+    return 1;
+}
+
 sub bin_addresses_for_postcode {
     my ($self, $postcode) = @_;
 
@@ -106,6 +202,9 @@ sub bin_services_for_address {
     for my $service (@$site_services) {
         next if !$service->{NextCollectionDate};
 
+        my $container = $containers->{ $service->{ServiceItemName} };
+        next unless $container;
+
         my $next_dt = eval {
             DateTime::Format::W3CDTF->parse_datetime(
                 $service->{NextCollectionDate} );
@@ -138,16 +237,12 @@ sub bin_services_for_address {
             next if $now_dt > $to_dt;
         }
 
-        my $containers = $self->_containers($property);
-
         my ($round) = split / /, $service->{RoundSchedule};
         my $filtered_service = {
             id             => $service->{SiteServiceID},
             service_id     => $service->{ServiceItemName},
-            service_name =>
-                $containers->{ $service->{ServiceItemName} }{name},
-            service_description =>
-                $containers->{ $service->{ServiceItemName} }{description},
+            service_name        => $container->{name},
+            service_description => $container->{description},
             round_schedule => $service->{RoundSchedule},
             round          => $round,
             next           => {
@@ -577,10 +672,6 @@ For:
 HTML
 
     return {
-        'CW-SACK' => {
-            name        => 'Clinical Waste Sack(s)',
-            description => 'Clinical waste',
-        },
         'FO-140' => {
             name => 'Communal Food Bin',
             description => 'Food waste',
