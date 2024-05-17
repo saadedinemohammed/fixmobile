@@ -147,4 +147,19 @@ sub open311_post_send {
         delete $self->{original_external_id};
     }
 }
+
+sub waste_munge_bulky_amend {
+    my ($self, $p, $data) = @_;
+
+    my $c = $self->{c};
+
+    my ($date, $ref, $expiry) = split(";", $data->{chosen_date});
+    my $guid_key = $self->council_url . ":echo:bulky_event_guid:" . $c->stash->{property}->{id};
+
+    $p->update_extra_field({ name => 'Collection_Date', value => $date });
+    $p->update_extra_field({ name => 'reservation', value => $ref });
+    $p->update_extra_field({ name => 'GUID', value => $self->{c}->session->{$guid_key} });
+    $p->update_extra_field({ name => 'Exact Location', value => $data->{location} });
+}
+
 1;
