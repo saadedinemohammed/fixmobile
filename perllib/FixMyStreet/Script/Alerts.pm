@@ -133,6 +133,9 @@ sub send_alert_type {
                 $row->{item_text_original} = $row->{item_text};
                 $row->{item_text} = $row->{item_text} ? $row->{item_text} . "\n\n" . $update :
                                                         $update;
+                if ($row->{private_email_text} && $report->contact->get_extra_metadata('type', '') ne 'waste') {
+                    $row->{private_email_text} = $row->{private_email_text} . "\n\n" . $update;
+                }
                 $last_problem_state = $row->{item_problem_state};
             }
             next unless $row->{item_text};
