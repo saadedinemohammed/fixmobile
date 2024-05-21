@@ -1330,7 +1330,15 @@ $.extend(fixmystreet.set_up, {
 
     var focusFirstVisibleInput = function() {
         // Ignore logged-in form here, because it should all be pre-filled already!
-        $('#form_sign_in_yes input, #form_sign_in_no input').filter(':visible').eq(0).trigger('focus');
+        var $inputs = $('#form_sign_in_yes input, #form_sign_in_no input').filter(':visible');
+
+        // Check if there is an element with class .form-section-preview. This will allow users to rectify any previews answers without having to circle around the whole page.
+        var $formSectionPreview = $('.form-section-preview').first();
+        if ($formSectionPreview.length) {
+            $formSectionPreview.children().first().trigger('focus');
+        } else {
+            $inputs.eq(0).trigger('focus');
+        }
     };
 
     // Display tweak
@@ -1512,12 +1520,23 @@ $.extend(fixmystreet.set_up, {
     });
     $('body').on('click', '#alert_email_button', function(e) {
         e.preventDefault();
+    
+        var emailInput = $(this).closest('.js-alert-list').find('input[type=email]');
+        var emailValue = emailInput.val();
+
+        if (jQuery.validator.methods.notEmail.call({ optional: function() { return false; } }, emailValue)) {
+            emailInput.focus();
+            return;
+        }
+
         var form = $('<form/>').attr({ method:'post', action:"/alert/subscribe" });
         form.append($('<input name="alert" value="Subscribe me to an email alert" type="hidden" />'));
+
         $(this).closest('.js-alert-list').find('textarea, input[type=email], input[type=text], input[type=hidden], input[type=radio]:checked').each(function() {
             var $v = $(this);
             $('<input/>').attr({ name:$v.attr('name'), value:$v.val(), type:'hidden' }).appendTo(form);
         });
+
         $('body').append(form);
         form.trigger('submit');
     });
